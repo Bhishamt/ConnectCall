@@ -1,0 +1,92 @@
+# Miscellaneous
+*.class
+*.log
+*.pyc
+*.swp
+.DS_Store
+.atom/
+.build/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+# IntelliJ related
+*.iml
+*.ipr
+*.iws
+.idea/
+
+# VS Code
+.vscode/
+
+# Environment / Secret files
+*.env
+.env*
+*.key
+*.pem
+*.p12
+*.jks
+*.keystore
+
+# Documentation / Spec files (Excluded per repository requirements)
+01_PRD.md
+02_TRD.md
+03_UI_UX.md
+04_AUTHENTICATION.md
+05_DATABASE.md
+06_CALLING_ARCHITECTURE.md
+07_PERMISSIONS_ERRORS.md
+08_TEST_PLAN.md
+09_SECURITY.md
+10_README_SPEC.md
+11_PROJECT_ROADMAP.md
+12_AGENTS.md
+README.md
+docs/
+
+# Agent / Tooling files
+.agents/
+skills-lock.json
+
+# Flutter/Dart/Pub related
+**/doc/api/
+**/ios/Flutter/.last_build_id
+**/ios/Flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.pub-cache/
+.pub/
+build/
+**/build/
+/coverage/
+
+# Symbolication related
+app.*.symbols
+
+# Obfuscation related
+app.*.map.json
+
+# Android build artifacts
+/android/app/debug
+/android/app/profile
+/android/app/release
+/android/app/build/
+android/.gradle/
+android/.kotlin/
+android/local.properties
+
+# iOS / macOS build artifacts
+ios/Pods/
+ios/.symlinks/
+macos/Pods/
+
+# Supabase CLI local temp state
+supabase/.temp/
+
+# Widget Preview related
+.widget_preview/
+
