@@ -43,7 +43,7 @@ migrate_working_dir/
 10_README_SPEC.md
 11_PROJECT_ROADMAP.md
 12_AGENTS.md
-README.md
+ios/Runner/Assets.xcassets/LaunchImage.imageset/README.md
 docs/
 
 # Agent / Tooling files
