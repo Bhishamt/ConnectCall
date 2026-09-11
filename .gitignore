@@ -24,13 +24,14 @@ migrate_working_dir/
 # Environment / Secret files
 *.env
 .env*
+!.env.example
 *.key
 *.pem
 *.p12
 *.jks
 *.keystore
 
-# Documentation / Spec files (Excluded per repository requirements)
+# Spec files (Excluded per repository requirements)
 01_PRD.md
 02_TRD.md
 03_UI_UX.md
@@ -44,7 +45,6 @@ migrate_working_dir/
 11_PROJECT_ROADMAP.md
 12_AGENTS.md
 ios/Runner/Assets.xcassets/LaunchImage.imageset/README.md
-docs/
 
 # Agent / Tooling files
 .agents/
