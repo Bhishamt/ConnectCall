@@ -7,6 +7,7 @@ import '../../services/calling_service.dart';
 import '../../services/webrtc_calling_service.dart';
 import '../../services/permission_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/ringtone_service.dart';
 import '../../repositories/call_repository.dart';
 import '../../models/call_model.dart';
 import '../../models/user_model.dart';
@@ -23,6 +24,12 @@ final permissionServiceProvider = Provider<PermissionService>((ref) {
 
 final notificationServiceProvider = Provider<NotificationService>((ref) {
   final service = NotificationService();
+  ref.onDispose(() => service.dispose());
+  return service;
+});
+
+final ringtoneServiceProvider = Provider<RingtoneService>((ref) {
+  final service = RingtoneService();
   ref.onDispose(() => service.dispose());
   return service;
 });
@@ -79,6 +86,7 @@ class CallNotifier extends StateNotifier<CallState> {
   final CallRepository _callRepo;
   final PermissionService _permissionService;
   final NotificationService _notificationService;
+  final RingtoneService _ringtoneService;
   final String? _currentUserId;
 
   Timer? _durationTimer;
@@ -87,7 +95,6 @@ class CallNotifier extends StateNotifier<CallState> {
   StreamSubscription<List<CallModel>>? _incomingSubscription;
   StreamSubscription<CallStatus>? _rtcStatusSubscription;
 
-  /// Time when the call was answered — used for accurate duration computation
   DateTime? _answeredAt;
 
   CallNotifier(
@@ -95,6 +102,7 @@ class CallNotifier extends StateNotifier<CallState> {
     this._callRepo,
     this._permissionService,
     this._notificationService,
+    this._ringtoneService,
     this._currentUserId,
   ) : super(CallState()) {
     _listenToIncomingCalls();
@@ -109,17 +117,33 @@ class CallNotifier extends StateNotifier<CallState> {
     if (currentUserId == null) return;
     _incomingSubscription = _callRepo.streamIncomingCalls(currentUserId).listen(
       (calls) {
-        if (calls.isNotEmpty && state.status == CallStatus.idle) {
+        if (calls.isNotEmpty) {
           final incomingCall = calls.first;
-          state = state.copyWith(
-            status: CallStatus.ringing,
-            activeCall: incomingCall,
-          );
-          _notificationService.showIncomingCallNotification(
-            callerName: incomingCall.callerName ?? 'Someone',
-            isVideo: incomingCall.callType == CallType.video,
-          );
-          _startRingTimeout();
+
+          // If ALREADY in another call, automatically update incoming call to busy!
+          if (state.status != CallStatus.idle &&
+              state.activeCall?.id != incomingCall.id) {
+            _callRepo.updateCallStatus(
+              callId: incomingCall.id,
+              status: CallStatus.busy,
+              endedAt: DateTime.now(),
+              durationSeconds: 0,
+            );
+            return;
+          }
+
+          if (state.status == CallStatus.idle) {
+            state = state.copyWith(
+              status: CallStatus.ringing,
+              activeCall: incomingCall,
+            );
+            _ringtoneService.startIncomingRingtone();
+            _notificationService.showIncomingCallNotification(
+              callerName: incomingCall.callerName ?? 'Someone',
+              isVideo: incomingCall.callType == CallType.video,
+            );
+            _startRingTimeout();
+          }
         }
       },
     );
@@ -134,6 +158,7 @@ class CallNotifier extends StateNotifier<CallState> {
         case CallStatus.connecting:
           if (state.status != CallStatus.idle &&
               state.status != CallStatus.ended) {
+            _ringtoneService.stop();
             _notificationService.cancelIncomingCallNotification();
             state = state.copyWith(status: CallStatus.connecting);
           }
@@ -143,7 +168,18 @@ class CallNotifier extends StateNotifier<CallState> {
           if (state.status != CallStatus.idle &&
               state.status != CallStatus.ended) {
             _connectingTimeoutTimer?.cancel();
+            _ringtoneService.stop();
             _notificationService.cancelIncomingCallNotification();
+
+            final active = state.activeCall;
+            if (active != null) {
+              _notificationService.showActiveCallNotification(
+                contactName:
+                    active.calleeName ?? active.callerName ?? 'Contact',
+                isVideo: active.callType == CallType.video,
+              );
+            }
+
             _answeredAt = DateTime.now();
             state = state.copyWith(status: CallStatus.connected);
             _startDurationTimer();
@@ -161,7 +197,9 @@ class CallNotifier extends StateNotifier<CallState> {
         case CallStatus.rejected:
           if (state.status != CallStatus.idle) {
             _cancelAllTimers();
+            _ringtoneService.stop();
             _notificationService.cancelIncomingCallNotification();
+            _notificationService.cancelActiveCallNotification();
             _updateCallRecord(
               CallStatus.rejected,
               endedAt: DateTime.now(),
@@ -187,7 +225,9 @@ class CallNotifier extends StateNotifier<CallState> {
 
   void _handleCallFailed() {
     _cancelAllTimers();
+    _ringtoneService.stop();
     _notificationService.cancelIncomingCallNotification();
+    _notificationService.cancelActiveCallNotification();
     final active = state.activeCall;
     if (active != null) {
       _callRepo.updateCallStatus(
@@ -206,7 +246,9 @@ class CallNotifier extends StateNotifier<CallState> {
 
   void _handleCallDisconnected() {
     _cancelAllTimers();
+    _ringtoneService.stop();
     _notificationService.cancelIncomingCallNotification();
+    _notificationService.cancelActiveCallNotification();
     final secs = state.durationSeconds;
     final active = state.activeCall;
     if (active != null) {
@@ -223,7 +265,9 @@ class CallNotifier extends StateNotifier<CallState> {
 
   void _handleCallEnded() {
     _cancelAllTimers();
+    _ringtoneService.stop();
     _notificationService.cancelIncomingCallNotification();
+    _notificationService.cancelActiveCallNotification();
     final secs = _computeDuration();
     final active = state.activeCall;
     if (active != null) {
@@ -263,7 +307,9 @@ class CallNotifier extends StateNotifier<CallState> {
 
   Future<void> _handleTimeout() async {
     _cancelAllTimers();
+    _ringtoneService.stop();
     _notificationService.cancelIncomingCallNotification();
+    _notificationService.cancelActiveCallNotification();
     final active = state.activeCall;
     if (active != null) {
       await _callRepo.updateCallStatus(
@@ -297,7 +343,7 @@ class CallNotifier extends StateNotifier<CallState> {
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Call initiation
+  // Call initiation via Atomic RPC
   // ──────────────────────────────────────────────────────────────────────────
   Future<bool> initiateCall({
     required UserModel recipient,
@@ -337,8 +383,11 @@ class CallNotifier extends StateNotifier<CallState> {
     );
 
     try {
+      // Invoke atomic RPC (handles busy detection & lock)
       await _callRepo.createCallSession(newCall);
+
       state = state.copyWith(status: CallStatus.calling, activeCall: newCall);
+      _ringtoneService.startOutgoingRingtone();
       _startRingTimeout();
       _startConnectingTimeout();
       _answeredAt = null;
@@ -347,12 +396,14 @@ class CallNotifier extends StateNotifier<CallState> {
         call: newCall,
         currentUserId: currentUserId,
       );
-      // Duration timer starts only when connected (via _listenToRtcStatus)
       return true;
     } catch (e) {
+      _ringtoneService.stop();
       final appErr = AppException.fromException(e);
+      final isBusy = appErr.message.contains('busy') || appErr.code == 'busy';
+
       state = state.copyWith(
-        status: CallStatus.failed,
+        status: isBusy ? CallStatus.busy : CallStatus.failed,
         errorMessage: appErr.message,
       );
       await endCall();
@@ -367,7 +418,9 @@ class CallNotifier extends StateNotifier<CallState> {
     final active = state.activeCall;
     final currentUserId = _currentUserId;
     if (active == null || currentUserId == null) return;
+
     _ringTimeoutTimer?.cancel();
+    _ringtoneService.stop();
     _notificationService.cancelIncomingCallNotification();
     _answeredAt = null;
 
@@ -391,7 +444,6 @@ class CallNotifier extends StateNotifier<CallState> {
         call: active,
         currentUserId: currentUserId,
       );
-      // connected state + timer start happen via _listenToRtcStatus
     } catch (e) {
       final appErr = AppException.fromException(e);
       state = state.copyWith(
@@ -404,7 +456,10 @@ class CallNotifier extends StateNotifier<CallState> {
 
   Future<void> rejectCall() async {
     _cancelAllTimers();
+    _ringtoneService.stop();
     _notificationService.cancelIncomingCallNotification();
+    _notificationService.cancelActiveCallNotification();
+
     final active = state.activeCall;
     if (active != null) {
       await _callRepo.updateCallStatus(
@@ -421,7 +476,10 @@ class CallNotifier extends StateNotifier<CallState> {
 
   Future<void> endCall() async {
     _cancelAllTimers();
+    _ringtoneService.stop();
     _notificationService.cancelIncomingCallNotification();
+    _notificationService.cancelActiveCallNotification();
+
     final secs = _computeDuration();
     final active = state.activeCall;
 
@@ -447,7 +505,9 @@ class CallNotifier extends StateNotifier<CallState> {
 
   void resetState() {
     _cancelAllTimers();
+    _ringtoneService.stop();
     _notificationService.cancelIncomingCallNotification();
+    _notificationService.cancelActiveCallNotification();
     state = CallState(status: CallStatus.idle);
   }
 
@@ -459,6 +519,7 @@ class CallNotifier extends StateNotifier<CallState> {
           state.status == CallStatus.rejected ||
           state.status == CallStatus.missed ||
           state.status == CallStatus.failed ||
+          state.status == CallStatus.busy ||
           state.status == CallStatus.disconnected) {
         state = CallState(status: CallStatus.idle);
       }
@@ -524,7 +585,9 @@ class CallNotifier extends StateNotifier<CallState> {
     _incomingSubscription?.cancel();
     _rtcStatusSubscription?.cancel();
     _cancelAllTimers();
+    _ringtoneService.stop();
     _notificationService.cancelIncomingCallNotification();
+    _notificationService.cancelActiveCallNotification();
     super.dispose();
   }
 }
@@ -534,6 +597,7 @@ final callProvider = StateNotifierProvider<CallNotifier, CallState>((ref) {
   final callRepo = ref.watch(callRepositoryProvider);
   final permissionService = ref.watch(permissionServiceProvider);
   final notificationService = ref.watch(notificationServiceProvider);
+  final ringtoneService = ref.watch(ringtoneServiceProvider);
   final currentUser = ref.watch(authProvider).user;
 
   return CallNotifier(
@@ -541,6 +605,7 @@ final callProvider = StateNotifierProvider<CallNotifier, CallState>((ref) {
     callRepo,
     permissionService,
     notificationService,
+    ringtoneService,
     currentUser?.id,
   );
 });

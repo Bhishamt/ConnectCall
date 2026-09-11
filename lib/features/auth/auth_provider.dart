@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as supabase;
 
 import '../../repositories/auth_repository.dart';
 import '../../repositories/user_repository.dart';
@@ -9,8 +9,8 @@ import '../../services/presence_service.dart';
 import '../../models/user_model.dart';
 import '../../core/errors/app_exception.dart';
 
-final supabaseClientProvider = Provider<SupabaseClient>((ref) {
-  return Supabase.instance.client;
+final supabaseClientProvider = Provider<supabase.SupabaseClient>((ref) {
+  return supabase.Supabase.instance.client;
 });
 
 final authRepositoryProvider = Provider<AuthRepository>((ref) {
@@ -34,7 +34,7 @@ class AuthState {
   final bool isAuthenticated;
 
   AuthState({
-    this.isLoading = true, // Start as loading — session restoration in progress
+    this.isLoading = true,
     this.user,
     this.errorMessage,
     this.isAuthenticated = false,
@@ -59,15 +59,53 @@ class AuthNotifier extends StateNotifier<AuthState> {
   final AuthRepository _authRepo;
   final UserRepository _userRepo;
   final PresenceService _presenceService;
-  StreamSubscription<AuthState>? _authSub;
+  StreamSubscription<supabase.AuthState>? _authStreamSub;
 
   AuthNotifier(this._authRepo, this._userRepo, this._presenceService)
     : super(AuthState(isLoading: true)) {
     _initSession();
+    _listenToAuthChanges();
+  }
+
+  void _listenToAuthChanges() {
+    _authStreamSub = supabase.Supabase.instance.client.auth.onAuthStateChange
+        .listen((data) async {
+          final event = data.event;
+          final session = data.session;
+
+          if (event == supabase.AuthChangeEvent.signedIn ||
+              event == supabase.AuthChangeEvent.tokenRefreshed) {
+            if (session != null && !state.isAuthenticated) {
+              final user = session.user;
+              try {
+                final profile = await _userRepo.getUserProfile(user.id);
+                _presenceService.start(user.id);
+                state = AuthState(
+                  isLoading: false,
+                  user: profile,
+                  isAuthenticated: true,
+                );
+              } catch (_) {
+                _presenceService.start(user.id);
+                state = AuthState(
+                  isLoading: false,
+                  user: UserModel(
+                    id: user.id,
+                    name: user.email?.split('@').first ?? 'User',
+                    email: user.email ?? '',
+                  ),
+                  isAuthenticated: true,
+                );
+              }
+            }
+          } else if (event == supabase.AuthChangeEvent.signedOut) {
+            _presenceService.stop();
+            state = AuthState(isLoading: false, isAuthenticated: false);
+          }
+        });
   }
 
   Future<void> _initSession() async {
-    // state is already isLoading=true from constructor
     final user = _authRepo.currentUser;
     if (user != null) {
       try {
@@ -79,9 +117,16 @@ class AuthNotifier extends StateNotifier<AuthState> {
           isAuthenticated: true,
         );
       } catch (_) {
-        // Profile fetch failed but we have a valid Supabase session.
-        // Still mark as authenticated — profile may load later.
-        state = AuthState(isLoading: false, isAuthenticated: false);
+        _presenceService.start(user.id);
+        state = AuthState(
+          isLoading: false,
+          user: UserModel(
+            id: user.id,
+            name: user.email?.split('@').first ?? 'User',
+            email: user.email ?? '',
+          ),
+          isAuthenticated: true,
+        );
       }
     } else {
       state = AuthState(isLoading: false, isAuthenticated: false);
@@ -120,7 +165,6 @@ class AuthNotifier extends StateNotifier<AuthState> {
         password: password,
       );
       if (response.user != null) {
-        // Wait briefly for the trigger to create the profile
         await Future.delayed(const Duration(milliseconds: 500));
         final profile = await _userRepo.getUserProfile(response.user!.id);
         _presenceService.start(response.user!.id);
@@ -154,7 +198,7 @@ class AuthNotifier extends StateNotifier<AuthState> {
 
   @override
   void dispose() {
-    _authSub?.cancel();
+    _authStreamSub?.cancel();
     super.dispose();
   }
 }

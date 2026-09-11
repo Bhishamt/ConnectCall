@@ -2,27 +2,34 @@ import 'dart:async';
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-/// Notification service for incoming call alerts.
+/// Notification service for incoming and active call alerts.
 ///
 /// Supported scenarios:
-/// - App in FOREGROUND: Shows incoming call screen directly (no notification needed).
-/// - App in BACKGROUND (alive): Shows a heads-up notification with call type/caller.
-/// - App TERMINATED: NOT SUPPORTED without FCM infrastructure.
-///
-/// To support terminated-state calling, Firebase Cloud Messaging (FCM) + a
-/// Supabase Edge Function or Database Webhook would be required to send push
-/// notifications to the device. This is documented in KNOWN_LIMITATIONS.md.
+/// - App in FOREGROUND: Shows incoming call screen directly + Active Call Banner.
+/// - App in BACKGROUND (alive): Shows a heads-up notification with call type/caller,
+///   and an ongoing notification for active calls to recover the call UI.
 class NotificationService {
-  static const String _channelId = 'incoming_calls';
-  static const String _channelName = 'Incoming Calls';
-  static const String _channelDesc =
+  static const String _incomingChannelId = 'incoming_calls';
+  static const String _incomingChannelName = 'Incoming Calls';
+  static const String _incomingChannelDesc =
       'Notifications for incoming audio and video calls';
   static const int _incomingCallNotificationId = 1001;
+
+  static const String _activeChannelId = 'active_calls';
+  static const String _activeChannelName = 'Active Calls';
+  static const String _activeChannelDesc =
+      'Ongoing notification for active call sessions';
+  static const int _activeCallNotificationId = 2002;
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
 
   bool _isInitialized = false;
+
+  final StreamController<String> _tapController =
+      StreamController<String>.broadcast();
+
+  Stream<String> get onNotificationTap => _tapController.stream;
 
   Future<void> initialize() async {
     if (_isInitialized) return;
@@ -37,22 +44,33 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
 
-    // Create the notification channel (Android 8+)
-    const androidChannel = AndroidNotificationChannel(
-      _channelId,
-      _channelName,
-      description: _channelDesc,
+    // Create notification channels (Android 8+)
+    const incomingChannel = AndroidNotificationChannel(
+      _incomingChannelId,
+      _incomingChannelName,
+      description: _incomingChannelDesc,
       importance: Importance.max,
       playSound: true,
       enableVibration: true,
       enableLights: true,
     );
 
-    await _plugin
+    const activeChannel = AndroidNotificationChannel(
+      _activeChannelId,
+      _activeChannelName,
+      description: _activeChannelDesc,
+      importance: Importance.low,
+      playSound: false,
+      enableVibration: false,
+    );
+
+    final androidImpl = _plugin
         .resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin
-        >()
-        ?.createNotificationChannel(androidChannel);
+        >();
+
+    await androidImpl?.createNotificationChannel(incomingChannel);
+    await androidImpl?.createNotificationChannel(activeChannel);
 
     _isInitialized = true;
   }
@@ -77,9 +95,9 @@ class NotificationService {
 
     final callType = isVideo ? 'Video' : 'Audio';
     const androidDetails = AndroidNotificationDetails(
-      _channelId,
-      _channelName,
-      channelDescription: _channelDesc,
+      _incomingChannelId,
+      _incomingChannelName,
+      channelDescription: _incomingChannelDesc,
       importance: Importance.max,
       priority: Priority.max,
       category: AndroidNotificationCategory.call,
@@ -95,20 +113,62 @@ class NotificationService {
       'Incoming $callType Call',
       '$callerName is calling...',
       const NotificationDetails(android: androidDetails),
+      payload: 'incoming_call',
     );
   }
 
-  /// Cancel the incoming call notification (when call is answered or ended).
+  /// Show an ongoing active call notification so minimized calls remain recoverable.
+  Future<void> showActiveCallNotification({
+    required String contactName,
+    required bool isVideo,
+  }) async {
+    if (!_isInitialized) await initialize();
+
+    final callType = isVideo ? 'Video' : 'Audio';
+    const androidDetails = AndroidNotificationDetails(
+      _activeChannelId,
+      _activeChannelName,
+      channelDescription: _activeChannelDesc,
+      importance: Importance.low,
+      priority: Priority.low,
+      category: AndroidNotificationCategory.call,
+      ongoing: true,
+      autoCancel: false,
+      visibility: NotificationVisibility.public,
+      icon: '@mipmap/ic_launcher',
+    );
+
+    await _plugin.show(
+      _activeCallNotificationId,
+      'Active $callType Call with $contactName',
+      'Tap to return to active call controls',
+      const NotificationDetails(android: androidDetails),
+      payload: 'active_call',
+    );
+  }
+
+  /// Cancel the incoming call notification.
   Future<void> cancelIncomingCallNotification() async {
     await _plugin.cancel(_incomingCallNotificationId);
   }
 
+  /// Cancel the active call notification.
+  Future<void> cancelActiveCallNotification() async {
+    await _plugin.cancel(_activeCallNotificationId);
+  }
+
   void _onNotificationTapped(NotificationResponse response) {
-    // When user taps the notification, the app comes to foreground automatically.
-    // The CallNotifier's incoming call subscription will handle showing the UI.
+    final payload = response.payload ?? 'active_call';
+    if (!_tapController.isClosed) {
+      _tapController.add(payload);
+    }
   }
 
   Future<void> dispose() async {
     await cancelIncomingCallNotification();
+    await cancelActiveCallNotification();
+    if (!_tapController.isClosed) {
+      _tapController.close();
+    }
   }
 }

@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -7,27 +9,7 @@ import 'calling_service.dart';
 import '../models/call_model.dart';
 import '../core/errors/app_exception.dart';
 
-/// Complete WebRTC calling service with fixed signaling flow.
-///
-/// ## Fixed Signaling Flow (Caller → Receiver):
-///
-/// CALLER:
-///   1. Subscribe to channel
-///   2. Get local media
-///   3. Create PeerConnection + add tracks
-///   4. Set up ICE + onTrack handlers
-///   5. Wait for receiver `ready` signal (max 30s)
-///   6. Create + send Offer
-///
-/// RECEIVER:
-///   1. Subscribe to channel
-///   2. Get local media
-///   3. Create PeerConnection + add tracks
-///   4. Set up ICE + onTrack handlers
-///   5. Send `ready` signal → triggers caller to send Offer
-///   6. Receive Offer → setRemoteDescription → createAnswer → send Answer
-///
-/// This ensures both sides are subscribed before SDP exchange begins.
+/// WebRTC calling service with symmetric video rendering & audio session routing.
 class WebRTCCallingService implements CallingService {
   final SupabaseClient _supabase;
 
@@ -60,12 +42,47 @@ class WebRTCCallingService implements CallingService {
   @override
   RTCVideoRenderer get remoteRenderer => _remoteRenderer;
 
+  void _log(String message) {
+    developer.log('[WEBRTC] $message');
+  }
+
   @override
   Future<void> initialize() async {
     if (_isInitialized) return;
     await _localRenderer.initialize();
     await _remoteRenderer.initialize();
     _isInitialized = true;
+    _log('Renderers initialized');
+  }
+
+  /// Configure AudioSession for VoIP voice communication.
+  Future<void> _configureAudioSession(bool isVideo) async {
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(
+        AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+          avAudioSessionCategoryOptions:
+              AVAudioSessionCategoryOptions.allowBluetooth |
+              AVAudioSessionCategoryOptions.defaultToSpeaker,
+          avAudioSessionMode: isVideo
+              ? AVAudioSessionMode.videoChat
+              : AVAudioSessionMode.voiceChat,
+          androidAudioAttributes: const AndroidAudioAttributes(
+            contentType: AndroidAudioContentType.speech,
+            usage: AndroidAudioUsage.voiceCommunication,
+          ),
+          androidAudioFocusGainType: AndroidAudioFocusGainType.gainTransient,
+          androidWillPauseWhenDucked: true,
+        ),
+      );
+      await session.setActive(true);
+      _log(
+        'AudioSession configured for ${isVideo ? "videoChat" : "voiceChat"}',
+      );
+    } catch (e) {
+      _log('AudioSession config error: $e');
+    }
   }
 
   Map<String, dynamic> get _rtcConfig => {
@@ -73,7 +90,8 @@ class WebRTCCallingService implements CallingService {
       {'urls': 'stun:stun.l.google.com:19302'},
       {'urls': 'stun:stun1.l.google.com:19302'},
       {'urls': 'stun:stun2.l.google.com:19302'},
-      {'urls': 'stun:stun.relay.metered.ca:80'},
+      {'urls': 'stun:stun3.l.google.com:19302'},
+      {'urls': 'stun:stun4.l.google.com:19302'},
     ],
     'sdpSemantics': 'unified-plan',
     'iceCandidatePoolSize': 10,
@@ -85,6 +103,7 @@ class WebRTCCallingService implements CallingService {
         'googNoiseSuppression': true,
         'googEchoCancellation': true,
         'googAutoGainControl': true,
+        'googHighpassFilter': true,
       },
       'optional': [],
     },
@@ -117,17 +136,22 @@ class WebRTCCallingService implements CallingService {
     _emitStatus(CallStatus.calling);
 
     try {
-      // 1. Get local media stream
       final isVideo = call.callType == CallType.video;
+      await _configureAudioSession(isVideo);
+
+      // 1. Get local media stream
       _localStream = await navigator.mediaDevices.getUserMedia(
         _mediaConstraints(isVideo),
       );
       _localRenderer.srcObject = _localStream;
+      _log(
+        'Local stream captured (tracks: ${_localStream?.getTracks().length})',
+      );
 
       // 2. Create peer connection
       await _createPeerConnection(currentUserId);
 
-      // 3. Subscribe to signaling channel (must happen before sending anything)
+      // 3. Subscribe to signaling channel
       final channelReady = Completer<void>();
       _signalingChannel = _supabase.channel(
         'call_signaling_${call.id}',
@@ -136,12 +160,12 @@ class WebRTCCallingService implements CallingService {
       _setupSignalingHandlers(call: call, isCaller: true);
 
       _signalingChannel!.subscribe((status, [error]) {
+        _log('Signaling subscription status: $status');
         if (status == RealtimeSubscribeStatus.subscribed) {
           if (!channelReady.isCompleted) channelReady.complete();
         }
       });
 
-      // Wait for channel to be ready (max 8 seconds)
       await channelReady.future.timeout(
         const Duration(seconds: 8),
         onTimeout: () => throw AppException(
@@ -149,20 +173,18 @@ class WebRTCCallingService implements CallingService {
           'signaling_timeout',
         ),
       );
-
-      // 4. Wait for receiver `ready` signal — handled in _setupSignalingHandlers
-      // The offer is sent from _onReceiverReady() callback.
-      // Set a timeout for the receiver to become ready (30s handled in call_provider)
     } catch (e) {
+      _log('startCall error: $e');
       await _cleanup();
       throw AppException.fromException(e);
     }
   }
 
-  // Called when receiver sends `ready` event — CALLER creates + sends offer
+  // CALLER creates + sends offer when receiver sends `ready`
   Future<void> _onReceiverReady() async {
     if (_isEnded || _peerConnection == null) return;
     try {
+      _log('Receiver is ready. Creating SDP offer...');
       _emitStatus(CallStatus.connecting);
 
       final offer = await _peerConnection!.createOffer({
@@ -175,7 +197,9 @@ class WebRTCCallingService implements CallingService {
         event: 'offer',
         payload: {'sender_id': _currentUserId, 'sdp': offer.toMap()},
       );
+      _log('SDP offer sent');
     } catch (e) {
+      _log('createOffer error: $e');
       _emitStatus(CallStatus.failed);
     }
   }
@@ -196,12 +220,15 @@ class WebRTCCallingService implements CallingService {
     _emitStatus(CallStatus.connecting);
 
     try {
-      // 1. Get local media stream
       final isVideo = call.callType == CallType.video;
+      await _configureAudioSession(isVideo);
+
+      // 1. Get local media stream
       _localStream = await navigator.mediaDevices.getUserMedia(
         _mediaConstraints(isVideo),
       );
       _localRenderer.srcObject = _localStream;
+      _log('Receiver local stream captured');
 
       // 2. Create peer connection
       await _createPeerConnection(currentUserId);
@@ -215,12 +242,12 @@ class WebRTCCallingService implements CallingService {
       _setupSignalingHandlers(call: call, isCaller: false);
 
       _signalingChannel!.subscribe((status, [error]) {
+        _log('Receiver signaling status: $status');
         if (status == RealtimeSubscribeStatus.subscribed) {
           if (!channelReady.isCompleted) channelReady.complete();
         }
       });
 
-      // Wait for channel to be ready before sending `ready`
       await channelReady.future.timeout(
         const Duration(seconds: 8),
         onTimeout: () => throw AppException(
@@ -229,37 +256,62 @@ class WebRTCCallingService implements CallingService {
         ),
       );
 
-      // 4. Signal to caller that we're ready to receive the offer
+      // 4. Send `ready` signal to caller
       _signalingChannel!.sendBroadcastMessage(
         event: 'ready',
         payload: {'sender_id': currentUserId},
       );
+      _log('Sent `ready` signal to caller');
     } catch (e) {
+      _log('acceptCall error: $e');
       await _cleanup();
       throw AppException.fromException(e);
     }
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Common: Create RTCPeerConnection
+  // PeerConnection creation & Symmetrical Remote Track Assignment
   // ──────────────────────────────────────────────────────────────────────────
   Future<void> _createPeerConnection(String currentUserId) async {
     _peerConnection = await createPeerConnection(_rtcConfig);
+    _log('RTCPeerConnection created');
 
     // Add local tracks
-    _localStream!.getTracks().forEach((track) {
-      _peerConnection!.addTrack(track, _localStream!);
-    });
+    if (_localStream != null) {
+      for (final track in _localStream!.getTracks()) {
+        await _peerConnection!.addTrack(track, _localStream!);
+      }
+    }
 
-    // Handle remote tracks
-    _peerConnection!.onTrack = (RTCTrackEvent event) {
+    // Symmetrical Track Handler for Remote Streams
+    _peerConnection!.onTrack = (RTCTrackEvent event) async {
+      _log(
+        'onTrack event: kind=${event.track.kind}, streams=${event.streams.length}',
+      );
+
       if (event.streams.isNotEmpty) {
         _remoteStream = event.streams[0];
-        _remoteRenderer.srcObject = _remoteStream;
+      } else {
+        _remoteStream ??= await createLocalMediaStream('remote_stream');
+        _remoteStream!.addTrack(event.track);
       }
+
+      // Always re-bind remoteRenderer when tracks arrive
+      _remoteRenderer.srcObject = _remoteStream;
+      _log(
+        'Remote renderer srcObject assigned (videoTracks: ${_remoteStream?.getVideoTracks().length})',
+      );
     };
 
-    // ICE candidate handler
+    _peerConnection!.onAddStream = (MediaStream stream) {
+      _log(
+        'onAddStream event (videoTracks: ${stream.getVideoTracks().length})',
+      );
+      _remoteStream = stream;
+      _remoteRenderer.srcObject = _remoteStream;
+    };
+
+    // ICE Candidate handler
     _peerConnection!.onIceCandidate = (RTCIceCandidate candidate) {
       if (candidate.candidate != null && candidate.candidate!.isNotEmpty) {
         _signalingChannel?.sendBroadcastMessage(
@@ -269,8 +321,9 @@ class WebRTCCallingService implements CallingService {
       }
     };
 
-    // Connection state monitoring
+    // Connection State
     _peerConnection!.onConnectionState = (RTCPeerConnectionState state) {
+      _log('PeerConnection state changed: $state');
       switch (state) {
         case RTCPeerConnectionState.RTCPeerConnectionStateConnected:
           _emitStatus(CallStatus.connected);
@@ -286,14 +339,13 @@ class WebRTCCallingService implements CallingService {
       }
     };
 
-    // ICE connection state
     _peerConnection!.onIceConnectionState = (RTCIceConnectionState state) {
-      // Log only — connection state above is authoritative
+      _log('ICE Connection state: $state');
     };
   }
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Signaling handlers (shared by caller and receiver)
+  // Signaling Message Handlers
   // ──────────────────────────────────────────────────────────────────────────
   void _setupSignalingHandlers({
     required CallModel call,
@@ -303,7 +355,6 @@ class WebRTCCallingService implements CallingService {
         .onBroadcast(
           event: 'ready',
           callback: (payload) async {
-            // Only the CALLER handles `ready` — receiver sent this
             if (isCaller &&
                 payload['sender_id'] != _currentUserId &&
                 !_isEnded) {
@@ -314,12 +365,14 @@ class WebRTCCallingService implements CallingService {
         .onBroadcast(
           event: 'offer',
           callback: (payload) async {
-            // Only the RECEIVER handles `offer`
             if (!isCaller &&
                 payload['sender_id'] != _currentUserId &&
                 _peerConnection != null &&
                 !_isEnded) {
               try {
+                _log(
+                  'Receiver received offer SDP. Setting remote description...',
+                );
                 final sdpMap = payload['sdp'] as Map<String, dynamic>;
                 final offer = RTCSessionDescription(
                   sdpMap['sdp'] as String?,
@@ -328,6 +381,7 @@ class WebRTCCallingService implements CallingService {
                 await _peerConnection!.setRemoteDescription(offer);
                 await _drainPendingIceCandidates();
 
+                _log('Creating answer SDP...');
                 final answer = await _peerConnection!.createAnswer({
                   'offerToReceiveAudio': true,
                   'offerToReceiveVideo': true,
@@ -338,7 +392,9 @@ class WebRTCCallingService implements CallingService {
                   event: 'answer',
                   payload: {'sender_id': _currentUserId, 'sdp': answer.toMap()},
                 );
-              } catch (_) {
+                _log('Answer SDP sent');
+              } catch (e) {
+                _log('Offer handling error: $e');
                 _emitStatus(CallStatus.failed);
               }
             }
@@ -347,12 +403,14 @@ class WebRTCCallingService implements CallingService {
         .onBroadcast(
           event: 'answer',
           callback: (payload) async {
-            // Only the CALLER handles `answer`
             if (isCaller &&
                 payload['sender_id'] != _currentUserId &&
                 _peerConnection != null &&
                 !_isEnded) {
               try {
+                _log(
+                  'Caller received answer SDP. Setting remote description...',
+                );
                 final sdpMap = payload['sdp'] as Map<String, dynamic>;
                 final answer = RTCSessionDescription(
                   sdpMap['sdp'] as String?,
@@ -360,8 +418,8 @@ class WebRTCCallingService implements CallingService {
                 );
                 await _peerConnection!.setRemoteDescription(answer);
                 await _drainPendingIceCandidates();
-                // Note: CallStatus.connected comes from onConnectionState
-              } catch (_) {
+              } catch (e) {
+                _log('Answer handling error: $e');
                 _emitStatus(CallStatus.failed);
               }
             }
@@ -387,21 +445,21 @@ class WebRTCCallingService implements CallingService {
                 } else {
                   _pendingIceCandidates.add(candidate);
                 }
-              } catch (_) {
-                // Ignore individual bad candidates
-              }
+              } catch (_) {}
             }
           },
         )
         .onBroadcast(
           event: 'reject',
           callback: (payload) {
+            _log('Received `reject` event');
             if (!_isEnded) _emitStatus(CallStatus.rejected);
           },
         )
         .onBroadcast(
           event: 'end',
           callback: (payload) {
+            _log('Received `end` event');
             if (!_isEnded) _emitStatus(CallStatus.ended);
           },
         );
@@ -414,9 +472,7 @@ class WebRTCCallingService implements CallingService {
     for (final candidate in candidates) {
       try {
         await _peerConnection!.addCandidate(candidate);
-      } catch (_) {
-        // Ignore individual candidate errors
-      }
+      } catch (_) {}
     }
   }
 
@@ -429,10 +485,9 @@ class WebRTCCallingService implements CallingService {
   // ──────────────────────────────────────────────────────────────────────────
   // Control methods
   // ──────────────────────────────────────────────────────────────────────────
-
   @override
   Future<void> rejectCall({required CallModel call}) async {
-    // Subscribe briefly to send reject, then cleanup
+    _log('Rejecting call ${call.id}');
     final ch = _supabase.channel('call_signaling_${call.id}');
     ch.subscribe((status, [_]) {
       if (status == RealtimeSubscribeStatus.subscribed) {
@@ -451,6 +506,7 @@ class WebRTCCallingService implements CallingService {
   @override
   Future<void> endCall() async {
     if (_isEnded) return;
+    _log('Ending call session');
     _isEnded = true;
     try {
       _signalingChannel?.sendBroadcastMessage(
@@ -465,6 +521,11 @@ class WebRTCCallingService implements CallingService {
   Future<void> _cleanup() async {
     _isEnded = true;
     _pendingIceCandidates.clear();
+
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(false);
+    } catch (_) {}
 
     try {
       await _signalingChannel?.unsubscribe();
@@ -490,14 +551,15 @@ class WebRTCCallingService implements CallingService {
 
     _localRenderer.srcObject = null;
     _remoteRenderer.srcObject = null;
+    _log('Cleanup completed');
   }
 
   // ──────────────────────────────────────────────────────────────────────────
   // Media controls
   // ──────────────────────────────────────────────────────────────────────────
-
   @override
   Future<void> toggleMicrophone(bool isMuted) async {
+    _log('toggleMicrophone: isMuted=$isMuted');
     _localStream?.getAudioTracks().forEach((track) {
       track.enabled = !isMuted;
     });
@@ -505,6 +567,7 @@ class WebRTCCallingService implements CallingService {
 
   @override
   Future<void> toggleCamera(bool isCameraOff) async {
+    _log('toggleCamera: isCameraOff=$isCameraOff');
     _localStream?.getVideoTracks().forEach((track) {
       track.enabled = !isCameraOff;
     });
@@ -512,6 +575,7 @@ class WebRTCCallingService implements CallingService {
 
   @override
   Future<void> switchCamera() async {
+    _log('switchCamera requested');
     final tracks = _localStream?.getVideoTracks();
     if (tracks != null && tracks.isNotEmpty) {
       await Helper.switchCamera(tracks.first);
@@ -520,6 +584,7 @@ class WebRTCCallingService implements CallingService {
 
   @override
   Future<void> toggleSpeaker(bool isSpeakerOn) async {
+    _log('toggleSpeaker: isSpeakerOn=$isSpeakerOn');
     await Helper.setSpeakerphoneOn(isSpeakerOn);
   }
 

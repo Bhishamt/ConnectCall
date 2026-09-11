@@ -8,20 +8,33 @@ class CallRepository {
 
   CallRepository(this._supabase);
 
+  /// Atomically initiates a call session via PostgreSQL `start_call_atomic` RPC.
+  /// Guarantees caller & callee busy locking and prevents race conditions.
   Future<CallModel> createCallSession(CallModel call) async {
     try {
-      final data = {
-        'id': call.id,
-        'caller_id': call.callerId,
-        'callee_id': call.calleeId,
-        'call_type': call.callType.name,
-        'direction': call.direction.name,
-        'status': call.status.name,
-        'started_at': call.startedAt.toIso8601String(),
-        'duration_seconds': call.durationSeconds,
-      };
+      final res = await _supabase.rpc(
+        'start_call_atomic',
+        params: {
+          'p_call_id': call.id,
+          'p_callee_id': call.calleeId,
+          'p_call_type': call.callType.name,
+        },
+      );
 
-      await _supabase.from('call_sessions').insert(data);
+      final result = res.toString();
+      if (result == 'BUSY') {
+        throw AppException('User is currently on another call.', 'busy');
+      } else if (result == 'ALREADY_IN_CALL') {
+        throw AppException(
+          'You are already in an active call.',
+          'already_in_call',
+        );
+      } else if (result == 'USER_NOT_FOUND') {
+        throw AppException('Recipient user not found.', 'user_not_found');
+      } else if (result != 'SUCCESS') {
+        throw AppException('Failed to start call ($result)', 'call_failed');
+      }
+
       return call;
     } catch (e) {
       throw AppException.fromException(e);

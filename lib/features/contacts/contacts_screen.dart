@@ -45,6 +45,16 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
       Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => AudioCallScreen(contact: contact)),
       );
+    } else if (mounted) {
+      final state = ref.read(callProvider);
+      if (state.errorMessage != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(state.errorMessage!),
+            backgroundColor: AppColors.callRed,
+          ),
+        );
+      }
     }
   }
 
@@ -59,6 +69,16 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
       Navigator.of(context).push(
         MaterialPageRoute(builder: (_) => VideoCallScreen(contact: contact)),
       );
+    } else if (mounted) {
+      final state = ref.read(callProvider);
+      if (state.errorMessage != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(state.errorMessage!),
+            backgroundColor: AppColors.callRed,
+          ),
+        );
+      }
     }
   }
 
