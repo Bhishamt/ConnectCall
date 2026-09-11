@@ -451,7 +451,7 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 ## 🎓 AI Acknowledgment
 
 This project was developed with assistance from:
-- **Google Antigravity (Gemini 3.6 Flash)** for architecture planning, WebRTC implementation, Riverpod state machines, and code optimization
+- **Opencode (Gemini 3.6 Flash)** for architecture planning, WebRTC implementation, Riverpod state machines, and code optimization
 
 All code remains original and production-ready.
 
