@@ -175,84 +175,193 @@ class _ContactsScreenState extends ConsumerState<ContactsScreen> {
       );
     }
 
+    final favorites = state.users.where((u) => u.isFavorite).toList();
+
     return RefreshIndicator(
       onRefresh: () => ref.read(userListProvider.notifier).loadUsers(),
-      child: ListView.separated(
-        itemCount: state.users.length,
+      child: ListView(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        separatorBuilder: (_, _) => const SizedBox(height: 8),
-        itemBuilder: (context, index) {
-          final user = state.users[index];
-          return Card(
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 8,
-              ),
-              leading: Stack(
-                children: [
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundColor: AppColors.primary,
-                    child: Text(
-                      user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  Positioned(
-                    right: 0,
-                    bottom: 0,
-                    child: Container(
-                      width: 14,
-                      height: 14,
-                      decoration: BoxDecoration(
-                        color: user.effectiveOnline
-                            ? AppColors.onlineGreen
-                            : AppColors.offlineGrey,
-                        shape: BoxShape.circle,
-                        border: Border.all(color: AppColors.surface, width: 2),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              title: Text(
-                user.name,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w600,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              subtitle: Text(
-                user.effectiveOnline ? 'Online' : _formatLastSeen(user),
+        children: [
+          if (favorites.isNotEmpty) ...[
+            const Padding(
+              padding: EdgeInsets.only(bottom: 8.0),
+              child: Text(
+                'QUICK DIAL FAVORITES',
                 style: TextStyle(
-                  color: user.effectiveOnline
-                      ? AppColors.onlineGreen
-                      : AppColors.textMuted,
-                  fontSize: 12,
+                  fontSize: 11,
+                  fontWeight: FontWeight.bold,
+                  color: AppColors.textMuted,
+                  letterSpacing: 1.0,
                 ),
-              ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: const Icon(Icons.call, color: AppColors.callGreen),
-                    onPressed: () => _startAudioCall(user),
-                    tooltip: 'Audio Call',
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.videocam, color: AppColors.primary),
-                    onPressed: () => _startVideoCall(user),
-                    tooltip: 'Video Call',
-                  ),
-                ],
               ),
             ),
-          );
-        },
+            SizedBox(
+              height: 90,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: favorites.length,
+                separatorBuilder: (_, _) => const SizedBox(width: 12),
+                itemBuilder: (context, index) {
+                  final fav = favorites[index];
+                  return GestureDetector(
+                    onTap: () => _startAudioCall(fav),
+                    child: Column(
+                      children: [
+                        Stack(
+                          children: [
+                            CircleAvatar(
+                              radius: 26,
+                              backgroundColor: AppColors.primary,
+                              child: Text(
+                                fav.name.isNotEmpty ? fav.name[0].toUpperCase() : 'U',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              right: 0,
+                              bottom: 0,
+                              child: Container(
+                                padding: const EdgeInsets.all(2),
+                                decoration: const BoxDecoration(
+                                  color: AppColors.surface,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.star,
+                                  size: 14,
+                                  color: Colors.amber,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 4),
+                        SizedBox(
+                          width: 60,
+                          child: Text(
+                            fav.name.split(' ').first,
+                            textAlign: TextAlign.center,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
+            ),
+            const Divider(color: AppColors.surfaceLight, height: 24),
+          ],
+          ...List.generate(state.users.length, (index) {
+            final user = state.users[index];
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              child: ListTile(
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 16,
+                  vertical: 8,
+                ),
+                leading: Stack(
+                  children: [
+                    CircleAvatar(
+                      radius: 24,
+                      backgroundColor: AppColors.primary,
+                      child: Text(
+                        user.name.isNotEmpty ? user.name[0].toUpperCase() : 'U',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 14,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: user.effectiveOnline
+                              ? AppColors.onlineGreen
+                              : AppColors.offlineGrey,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppColors.surface, width: 2),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                title: Row(
+                  children: [
+                    Text(
+                      user.name,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    if (user.isFavorite) ...[
+                      const SizedBox(width: 6),
+                      const Icon(Icons.star, size: 14, color: Colors.amber),
+                    ],
+                  ],
+                ),
+                subtitle: Text(
+                  user.effectiveOnline ? 'Online' : _formatLastSeen(user),
+                  style: TextStyle(
+                    color: user.effectiveOnline
+                        ? AppColors.onlineGreen
+                        : AppColors.textMuted,
+                    fontSize: 12,
+                  ),
+                ),
+                trailing: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: Icon(
+                        user.isFavorite ? Icons.star : Icons.star_border,
+                        color: user.isFavorite ? Colors.amber : AppColors.textMuted,
+                      ),
+                      onPressed: () {
+                        // Toggle local favorite status
+                        final updated = user.copyWith(isFavorite: !user.isFavorite);
+                        final listNotifier = ref.read(userListProvider.notifier);
+                        final currentUsers = listNotifier.state.users;
+                        final newUsers = currentUsers
+                            .map((u) => u.id == user.id ? updated : u)
+                            .toList();
+                        listNotifier.state =
+                            listNotifier.state.copyWith(users: newUsers);
+                      },
+                      tooltip: user.isFavorite ? 'Remove Favorite' : 'Add Favorite',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.call, color: AppColors.callGreen),
+                      onPressed: () => _startAudioCall(user),
+                      tooltip: 'Audio Call',
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.videocam, color: AppColors.primary),
+                      onPressed: () => _startVideoCall(user),
+                      tooltip: 'Video Call',
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
       ),
     );
   }

@@ -7,6 +7,7 @@ class UserModel {
   final String? phone;
   final String? avatarUrl;
   final bool isOnline;
+  final bool isFavorite;
   final DateTime? lastSeen;
   final DateTime? createdAt;
 
@@ -23,6 +24,7 @@ class UserModel {
     this.phone,
     this.avatarUrl,
     this.isOnline = false,
+    this.isFavorite = false,
     this.lastSeen,
     this.createdAt,
   });
@@ -35,6 +37,7 @@ class UserModel {
       phone: json['phone'] as String?,
       avatarUrl: json['avatar_url'] as String?,
       isOnline: json['is_online'] as bool? ?? false,
+      isFavorite: json['is_favorite'] as bool? ?? false,
       lastSeen: json['last_seen'] != null
           ? DateTime.tryParse(json['last_seen'].toString())
           : null,
@@ -52,6 +55,7 @@ class UserModel {
       'phone': phone,
       'avatar_url': avatarUrl,
       'is_online': isOnline,
+      'is_favorite': isFavorite,
       'last_seen': lastSeen?.toIso8601String(),
       'created_at': createdAt?.toIso8601String(),
     };
@@ -64,6 +68,7 @@ class UserModel {
     String? phone,
     String? avatarUrl,
     bool? isOnline,
+    bool? isFavorite,
     DateTime? lastSeen,
     DateTime? createdAt,
   }) {
@@ -74,6 +79,7 @@ class UserModel {
       phone: phone ?? this.phone,
       avatarUrl: avatarUrl ?? this.avatarUrl,
       isOnline: isOnline ?? this.isOnline,
+      isFavorite: isFavorite ?? this.isFavorite,
       lastSeen: lastSeen ?? this.lastSeen,
       createdAt: createdAt ?? this.createdAt,
     );
