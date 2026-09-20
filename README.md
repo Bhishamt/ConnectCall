@@ -31,6 +31,43 @@ Connect with people instantly through secure, cross-platform voice and video cal
 
 > Built for focused 1-to-1 conversations—with a clean foundation that is easy to extend.
 
+### Why it stands out
+
+- ⚡ Built for speed with direct peer-to-peer media routing
+- 🔒 Secure-by-default architecture using Supabase authentication and RLS
+- 📱 Cross-platform support for modern app ecosystems
+- 🧩 Clean feature-first structure that is ready for extension
+
+## 📸 App Preview
+
+> A dedicated visual showcase can be added here as the app evolves.
+
+```text
+┌──────────────────────────────────────────────┐
+│ Upcoming UI Preview                          │
+│ - Auth screen                                │
+│ - User directory                             │
+│ - In-call audio/video interface              │
+│ - Call history dashboard                     │
+└──────────────────────────────────────────────┘
+```
+
+<p align="center">
+  <img src="https://via.placeholder.com/1200x400?text=ConnectCall+App+Preview" alt="ConnectCall app preview placeholder" width="100%" />
+</p>
+
+## 🗺️ Roadmap
+
+Planned improvements and next milestones for the project:
+
+- ✅ Core real-time calling flow
+- ✅ Authentication and user discovery
+- ✅ Call history and presence tracking
+- 🔜 Group calling support
+- 🔜 Enhanced push notification handling
+- 🔜 Better call quality controls and adaptive bandwidth tuning
+- 🔜 Native desktop polish and accessibility improvements
+
 ## 🚀 Features
 
 | | Capability | Details |
