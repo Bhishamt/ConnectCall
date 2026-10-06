@@ -201,6 +201,7 @@ Audio noise suppression and echo cancellation are enabled by default. Video cons
 
 - Supabase Row-Level Security helps isolate user and call-history data.
 - Supabase Auth manages password hashing and authenticated access.
+All the best 
 - WebRTC uses DTLS-SRTP for media encryption.
 - Supabase Realtime carries signaling data—not audio or video media.
 - Camera and microphone permissions are requested at runtime.
