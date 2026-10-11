@@ -27,9 +27,11 @@ Connect with people instantly through secure, cross-platform voice and video cal
 
 ## ✨ What is ConnectCall?
 
-**ConnectCall** is a feature-rich Flutter application for seamless peer-to-peer audio and video calling across mobile, web, and desktop. Supabase handles authentication, persistence, and signaling while WebRTC delivers low-latency media directly between participants.
+**ConnectCall** is a feature-rich Flutter application for seamless peer-to-peer audio and video calling across mobile, web, and desktop. Supabase handles authentication, persistence, and signaling for the app.
 
 > Built for focused 1-to-1 conversations—with a clean foundation that is easy to extend.
+
+> Project status: Early MVP — the core calling flow is live, with active work focused on reliability, polish, and platform improvements.
 
 ### Why it stands out
 
@@ -40,7 +42,7 @@ Connect with people instantly through secure, cross-platform voice and video cal
 
 ## 📸 App Preview
 
-> A dedicated visual showcase can be added here as the app evolves.
+> Screenshots and a product walkthrough will be added as the app matures and the visual experience becomes more polished.
 
 ```text
 ┌──────────────────────────────────────────────┐
@@ -71,7 +73,7 @@ Planned improvements and next milestones for the project:
 ## 🚀 Features
 
 | | Capability | Details |
-|---|---|---|
+| |---|---|
 | 🔐 | **Authentication** | Email/password registration, persistent sessions, and automatic session restoration |
 | 👥 | **User discovery** | Searchable directory with profiles and real-time online presence |
 | 📞 | **Audio calling** | Mute/unmute, speakerphone controls, and call duration tracking |
@@ -201,7 +203,6 @@ Audio noise suppression and echo cancellation are enabled by default. Video cons
 
 - Supabase Row-Level Security helps isolate user and call-history data.
 - Supabase Auth manages password hashing and authenticated access.
-All the best 
 - WebRTC uses DTLS-SRTP for media encryption.
 - Supabase Realtime carries signaling data—not audio or video media.
 - Camera and microphone permissions are requested at runtime.
